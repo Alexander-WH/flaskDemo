@@ -83,7 +83,7 @@ def get_user(username):
         data = db.select_db(sql, (username,))
         if data:
             return jsonify({"code": 0, "data": data, "msg": "查询成功"})
-        return jsonify({"code": "1004", "msg": "查不到相关用户的信息"})
+        return jsonify({"code": 1004, "msg": "查不到相关用户的信息"})
     except Exception as e:
         return jsonify({"code": 500, "msg": f"数据库查询异常: {str(e)}"})
 
@@ -94,7 +94,7 @@ def user_register():
     data = request.json or {}
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
-    sex = data.get("sex", "0").strip()
+    sex = str(data.get("sex", "0")).strip()
     telephone = data.get("telephone", "").strip()
     address = data.get("address", "").strip()
 
@@ -104,7 +104,7 @@ def user_register():
     if sex not in ("0", "1"):
         return jsonify({"code": 2003, "msg": "输入的性别只能是 0(男) 或 1(女)！！！"})
 
-    if not (len(telephone) == 11 and re.match(r"^1[3,5,7,8]\d{9}$", telephone)):
+    if not (len(telephone) == 11 and re.match(r"^1[3-9]\d{9}$", telephone)):
         return jsonify({"code": 2004, "msg": "手机号格式不正确！！！"})
 
     try:
@@ -180,7 +180,7 @@ def user_update(id, admin_user):
         data = request.values
 
     new_password = data.get("password", "").strip()
-    new_sex = data.get("sex", "0").strip()
+    new_sex = str(data.get("sex", "0")).strip()
     new_telephone = data.get("telephone", "").strip()
     new_address = data.get("address", "").strip()
 
@@ -190,7 +190,7 @@ def user_update(id, admin_user):
     if new_sex not in ("0", "1"):
         return jsonify({"code": 4007, "msg": "输入的性别只能是 0(男) 或 1(女)！！！"})
 
-    if not (len(new_telephone) == 11 and re.match(r"^1[3,5,7,8]\d{9}$", new_telephone)):
+    if not (len(new_telephone) == 11 and re.match(r"^1[3-9]\d{9}$", new_telephone)):
         return jsonify({"code": 4008, "msg": "手机号格式不正确！！！"})
 
     try:
@@ -199,8 +199,8 @@ def user_update(id, admin_user):
         if not res_id:
             return jsonify({"code": 4005, "msg": "修改的用户ID不存在，无法进行修改，请检查！！！"})
 
-        sql_check_tel = "SELECT telephone FROM user WHERE telephone = %s"
-        res_tel = db.select_db(sql_check_tel, (new_telephone,))
+        sql_check_tel = "SELECT telephone FROM user WHERE telephone = %s AND id != %s"
+        res_tel = db.select_db(sql_check_tel, (new_telephone, id))
         if res_tel:
             return jsonify({"code": 4006, "msg": "手机号已被注册，无法进行修改，请检查！！！"})
 
