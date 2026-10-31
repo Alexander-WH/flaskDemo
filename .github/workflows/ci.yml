@@ -89,7 +89,8 @@ jobs:
           echo "--- 首页 ---"
           curl -s http://127.0.0.1:9999/; echo
           echo "--- 用户列表 ---"
-          curl -s http://127.0.0.1:9999/users | head -c 200; echo
+          curl -s http://127.0.0.1:9999/users -o users.json
+          head -c 200 users.json; echo
           echo "--- 查询不存在的用户（应为 1004）---"
           curl -s http://127.0.0.1:9999/users/not_exist_user; echo
           echo "--- 登录成功（应为 code 0）---"
