@@ -1,5 +1,7 @@
 # flaskDemo
 
+[![Smoke Test](https://github.com/Alexander-WH/flaskDemo/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexander-WH/flaskDemo/actions/workflows/ci.yml)
+
 本项目是一个基于 **Python + Flask + MySQL + Redis** 开发的简单后端接口项目。实现了用户注册、登录、增删改查等核心功能，采用 Token 鉴权机制与基于角色的权限控制（RBAC）。
 
 目前为纯后端接口，暂无前端界面，可通过 Postman、Jmeter、Apifox 等工具请求测试。
