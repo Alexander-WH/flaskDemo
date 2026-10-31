@@ -27,21 +27,11 @@ jobs:
           MYSQL_DATABASE: test
         ports:
           - 3306:3306
-        options: >-
-          --default-authentication-plugin=mysql_native_password
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=12
+        options: --default-authentication-plugin=mysql_native_password
       redis:
         image: redis:7
         ports:
           - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=12
 
     steps:
       - name: 拉取代码
@@ -64,14 +54,38 @@ jobs:
           sed -e 's/"your_mysql_password_here"/"root"/' \
               -e 's/"your_redis_password_here"/None/' \
               config/setting.example.py > config/setting.py
-          cat config/setting.py
+          echo "已生成 config/setting.py（密码不回显）"
 
-      - name: 初始化数据库
+      - name: 等待中间件就绪并初始化数据库
         run: |
-          for i in $(seq 1 20); do
-            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then break; fi
+          mysql_ready=0
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null; then
+              mysql_ready=1
+              echo "MySQL 就绪（第 ${i} 次探测）"
+              break
+            fi
             sleep 2
           done
+          if [ "$mysql_ready" != "1" ]; then
+            echo "MySQL 60 秒内未就绪，终止"
+            exit 1
+          fi
+
+          redis_ready=0
+          for i in $(seq 1 20); do
+            if (echo > /dev/tcp/127.0.0.1/6379) >/dev/null 2>&1; then
+              redis_ready=1
+              echo "Redis 就绪（第 ${i} 次探测）"
+              break
+            fi
+            sleep 1
+          done
+          if [ "$redis_ready" != "1" ]; then
+            echo "Redis 20 秒内未就绪，终止"
+            exit 1
+          fi
+
           mysql -h 127.0.0.1 -uroot -proot < init.sql
 
       - name: 语法编译检查
@@ -93,7 +107,7 @@ jobs:
           head -c 200 users.json; echo
           echo "--- 查询不存在的用户（应为 1004）---"
           curl -s http://127.0.0.1:9999/users/not_exist_user; echo
-          echo "--- 登录成功（应为 code 0）---"
+          echo "--- 登录成功（应为 code 0，含 token）---"
           curl -s -X POST http://127.0.0.1:9999/login \
                -H "Content-Type: application/json" \
                -d '{"username":"wintest5","password":"123456"}'; echo
@@ -114,6 +128,12 @@ jobs:
           echo "管理员登录 -> $body"
           echo "$body" | grep -Eq '"code": *0' || { echo "断言失败：管理员登录应返回 code 0"; exit 1; }
           echo "$body" | grep -q '"token"' || { echo "断言失败：登录成功应返回 token"; exit 1; }
+
+          body=$(curl -s -X POST http://127.0.0.1:9999/login \
+                  -H "Content-Type: application/json" \
+                  -d '{"username":"wintest5","password":"wrong"}')
+          echo "密码错误 -> $body"
+          echo "$body" | grep -Eq '"code": *1002' || { echo "断言失败：密码错误应返回 1002"; exit 1; }
 
           echo "全部断言通过"
 
