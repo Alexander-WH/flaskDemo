@@ -1,0 +1,121 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+        options: >-
+          --default-authentication-plugin=mysql_native_password
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install cryptography
+
+      - name: 生成配置
+        run: |
+          sed -e 's/"your_mysql_password_here"/"root"/' \
+              -e 's/"your_redis_password_here"/None/' \
+              config/setting.example.py > config/setting.py
+          cat config/setting.py
+
+      - name: 初始化数据库
+        run: |
+          for i in $(seq 1 20); do
+            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then break; fi
+            sleep 2
+          done
+          mysql -h 127.0.0.1 -uroot -proot < init.sql
+
+      - name: 语法编译检查
+        run: python -m compileall -q api common config app.py generate_data.py
+
+      - name: 启动服务并冒烟
+        run: |
+          nohup python -c "from api.user import app; app.run(host='127.0.0.1', port=9999, debug=False, use_reloader=False)" > flask.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9999/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:9999/ > /dev/null || { cat flask.log; exit 1; }
+
+          echo "--- 首页 ---"
+          curl -s http://127.0.0.1:9999/; echo
+          echo "--- 用户列表 ---"
+          curl -s http://127.0.0.1:9999/users | head -c 200; echo
+          echo "--- 查询不存在的用户（应为 1004）---"
+          curl -s http://127.0.0.1:9999/users/not_exist_user; echo
+          echo "--- 登录成功（应为 code 0）---"
+          curl -s -X POST http://127.0.0.1:9999/login \
+               -H "Content-Type: application/json" \
+               -d '{"username":"wintest5","password":"123456"}'; echo
+          echo "--- 登录失败（应为 1002）---"
+          curl -s -X POST http://127.0.0.1:9999/login \
+               -H "Content-Type: application/json" \
+               -d '{"username":"wintest5","password":"wrong"}'; echo
+
+      - name: 断言接口返回
+        run: |
+          body=$(curl -s http://127.0.0.1:9999/users/not_exist_user)
+          echo "查询不存在用户 -> $body"
+          echo "$body" | grep -Eq '"code": *1004' || { echo "断言失败：不存在用户应返回 1004"; exit 1; }
+
+          body=$(curl -s -X POST http://127.0.0.1:9999/login \
+                  -H "Content-Type: application/json" \
+                  -d '{"username":"wintest5","password":"123456"}')
+          echo "管理员登录 -> $body"
+          echo "$body" | grep -Eq '"code": *0' || { echo "断言失败：管理员登录应返回 code 0"; exit 1; }
+          echo "$body" | grep -q '"token"' || { echo "断言失败：登录成功应返回 token"; exit 1; }
+
+          echo "全部断言通过"
+
+      - name: 失败时打印日志
+        if: failure()
+        run: tail -n 120 flask.log || true
